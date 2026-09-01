@@ -161,6 +161,8 @@ module.exports = {
         channelId: voiceChannel.id,
         guildId,
         adapterCreator: interaction.guild.voiceAdapterCreator,
+        selfDeaf: false,
+        selfMute: false,
       });
 
       try {
