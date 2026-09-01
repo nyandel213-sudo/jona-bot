@@ -172,6 +172,16 @@ module.exports = {
         return interaction.editReply('❌ No pude conectarme al canal de voz.');
       }
 
+      // Si es canal de Stage, pedir hablar y convertirse en speaker
+      try {
+        const me = interaction.guild.members.me;
+        if (voiceChannel.type === 13) { // Stage channel
+          await me.voice.setSuppressed(false);
+        }
+      } catch (e) {
+        // ignorar si falla
+      }
+
       const player = createAudioPlayer();
       connection.subscribe(player);
 
