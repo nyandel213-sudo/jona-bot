@@ -1,5 +1,8 @@
 [phases.setup]
 nixPkgs = ["nodejs_20", "ffmpeg", "python3"]
 
+[phases.install]
+cmds = ["npm install --ignore-scripts"]
+
 [start]
 cmd = "node index.js"
