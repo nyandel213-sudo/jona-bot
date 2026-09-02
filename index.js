@@ -4,7 +4,6 @@ const { REST } = require('@discordjs/rest');
 const { Routes } = require('discord-api-types/v10');
 const { DisTube } = require('distube');
 const { YtDlpPlugin } = require('@distube/yt-dlp');
-const { SpotifyPlugin } = require('@distube/spotify');
 const fs = require('fs');
 const path = require('path');
 
@@ -19,21 +18,15 @@ const client = new Client({
 
 client.commands = new Collection();
 
-// ─── DisTube ────────────────────────────────────────────────────────────────
-// yt-dlp es mucho más resistente a los bloqueos de YouTube en servidores
-// cloud (Railway) que play-dl o ytdl-core, porque usa el binario yt-dlp
-// en vez de hacer las peticiones directas desde Node.
 client.distube = new DisTube(client, {
   emitNewSongOnly: true,
   emitAddSongWhenCreatingQueue: false,
   emitAddListWhenCreatingQueue: false,
   plugins: [
-    new SpotifyPlugin({ emitEventsAfterFetching: true }),
     new YtDlpPlugin({ update: false }),
   ],
 });
 
-// ─── Cargar comandos ────────────────────────────────────────────────────────
 const commandsPath = path.join(__dirname, 'commands');
 const commandFiles = fs.readdirSync(commandsPath).filter(f => f.endsWith('.js') && !f.startsWith('_'));
 const commandsData = [];
@@ -47,7 +40,6 @@ for (const file of commandFiles) {
   }
 }
 
-// ─── Eventos de DisTube ─────────────────────────────────────────────────────
 client.distube
   .on('playSong', (queue, song) => {
     if (queue.textChannel) {
@@ -100,7 +92,6 @@ client.distube
     }
   });
 
-// ─── Ready ──────────────────────────────────────────────────────────────────
 client.once('ready', async () => {
   console.log(`✅ Jona Bot listo como ${client.user.tag}`);
 
@@ -116,9 +107,8 @@ client.once('ready', async () => {
   }
 });
 
-// ─── Interacciones ──────────────────────────────────────────────────────────
 client.on('interactionCreate', async (interaction) => {
-  if (interaction.isButton()) return; // los botones se manejan con collectors en cada comando
+  if (interaction.isButton()) return;
 
   if (!interaction.isChatInputCommand()) return;
   const command = client.commands.get(interaction.commandName);
