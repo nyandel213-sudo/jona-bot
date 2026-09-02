@@ -74,6 +74,22 @@ client.distube
   .on('empty', (queue) => {
     if (queue.textChannel) queue.textChannel.send('👋 Canal de voz vacío, saliendo...');
   })
+  .on('initQueue', (queue) => {
+    console.log('🔍 initQueue disparado, buscando conexión de voz...');
+    const voice = client.distube.voices.get(queue.id);
+    if (voice && voice.connection) {
+      console.log('🔍 Conexión de voz encontrada, escuchando cambios de estado...');
+      voice.connection.on('stateChange', (oldState, newState) => {
+        console.log(`🔍 Voice state: ${oldState.status} -> ${newState.status}`);
+        if (newState.networking) {
+          console.log(`🔍 Networking state: ${newState.networking.state?.code}`);
+        }
+      });
+      voice.connection.on('debug', (msg) => console.log('🔍 Voice debug:', msg));
+    } else {
+      console.log('🔍 No se encontró la conexión de voz todavía.');
+    }
+  })
   .on('finish', (queue) => {
     if (queue.textChannel) queue.textChannel.send('✅ Cola terminada.');
   })
