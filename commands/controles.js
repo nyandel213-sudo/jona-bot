@@ -1,5 +1,4 @@
 const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { AudioPlayerStatus } = require('@discordjs/voice');
 
 // ─── /skip ─────────────────────────────────────────────────────────────────
 const skip = {
@@ -7,10 +6,15 @@ const skip = {
     .setName('skip')
     .setDescription('Salta la canción actual'),
   async execute(interaction, client) {
-    const queue = client.queues.get(interaction.guildId);
-    if (!queue || !queue.current) return interaction.reply('❌ No hay nada reproduciendo.');
-    queue.player.stop();
-    await interaction.reply('⏭️ Canción saltada.');
+    const queue = client.distube.getQueue(interaction.guildId);
+    if (!queue) return interaction.reply('❌ No hay nada reproduciendo.');
+    try {
+      await queue.skip();
+      await interaction.reply('⏭️ Canción saltada.');
+    } catch (err) {
+      // No hay siguiente canción: DisTube ya terminó/limpió la cola
+      await interaction.reply('⏭️ Era la última canción, la cola terminó.');
+    }
   }
 };
 
@@ -20,12 +24,10 @@ const pause = {
     .setName('pause')
     .setDescription('Pausa la música'),
   async execute(interaction, client) {
-    const queue = client.queues.get(interaction.guildId);
-    if (!queue || !queue.current) return interaction.reply('❌ No hay nada reproduciendo.');
-    if (queue.player.state.status === AudioPlayerStatus.Paused) {
-      return interaction.reply('⚠️ Ya está pausado. Usa `/resume` para reanudar.');
-    }
-    queue.player.pause();
+    const queue = client.distube.getQueue(interaction.guildId);
+    if (!queue) return interaction.reply('❌ No hay nada reproduciendo.');
+    if (queue.paused) return interaction.reply('⚠️ Ya está pausado. Usa `/resume` para reanudar.');
+    queue.pause();
     await interaction.reply('⏸️ Música pausada.');
   }
 };
@@ -36,12 +38,10 @@ const resume = {
     .setName('resume')
     .setDescription('Reanuda la música pausada'),
   async execute(interaction, client) {
-    const queue = client.queues.get(interaction.guildId);
-    if (!queue || !queue.current) return interaction.reply('❌ No hay nada reproduciendo.');
-    if (queue.player.state.status !== AudioPlayerStatus.Paused) {
-      return interaction.reply('⚠️ La música no está pausada.');
-    }
-    queue.player.unpause();
+    const queue = client.distube.getQueue(interaction.guildId);
+    if (!queue) return interaction.reply('❌ No hay nada reproduciendo.');
+    if (!queue.paused) return interaction.reply('⚠️ La música no está pausada.');
+    queue.resume();
     await interaction.reply('▶️ Música reanudada.');
   }
 };
@@ -52,39 +52,36 @@ const stop = {
     .setName('stop')
     .setDescription('Para la música y borra la cola'),
   async execute(interaction, client) {
-    const queue = client.queues.get(interaction.guildId);
+    const queue = client.distube.getQueue(interaction.guildId);
     if (!queue) return interaction.reply('❌ No hay nada reproduciendo.');
-    queue.songs = [];
-    queue.player.stop();
-    queue.connection.destroy();
-    client.queues.delete(interaction.guildId);
+    queue.stop();
     await interaction.reply('⏹️ Música detenida y cola borrada. ¡Hasta luego!');
   }
 };
 
 // ─── /queue ────────────────────────────────────────────────────────────────
-const queue = {
+const queueCmd = {
   data: new SlashCommandBuilder()
     .setName('queue')
     .setDescription('Muestra la cola de canciones'),
   async execute(interaction, client) {
-    const q = client.queues.get(interaction.guildId);
-    if (!q || (!q.current && q.songs.length === 0)) {
+    const q = client.distube.getQueue(interaction.guildId);
+    if (!q || q.songs.length === 0) {
       return interaction.reply('📭 La cola está vacía.');
     }
 
+    const [current, ...rest] = q.songs;
     const lines = [];
-    if (q.current) {
-      lines.push(`**▶️ Reproduciendo:** [${q.current.title}](${q.current.url}) \`${q.current.duration || '??'}\``);
-    }
-    if (q.songs.length > 0) {
+    lines.push(`**▶️ Reproduciendo:** [${current.name}](${current.url}) \`${current.formattedDuration || '??'}\``);
+
+    if (rest.length > 0) {
       lines.push('');
       lines.push('**📋 En cola:**');
-      q.songs.slice(0, 10).forEach((s, i) => {
-        lines.push(`\`${i + 1}.\` [${s.title}](${s.url}) \`${s.duration || '??'}\``);
+      rest.slice(0, 10).forEach((s, i) => {
+        lines.push(`\`${i + 1}.\` [${s.name}](${s.url}) \`${s.formattedDuration || '??'}\``);
       });
-      if (q.songs.length > 10) {
-        lines.push(`\n*...y ${q.songs.length - 10} canciones más*`);
+      if (rest.length > 10) {
+        lines.push(`\n*...y ${rest.length - 10} canciones más*`);
       }
     }
 
@@ -93,7 +90,7 @@ const queue = {
         color: 0x5865F2,
         title: '🎵 Cola de canciones',
         description: lines.join('\n'),
-        footer: { text: `${q.songs.length} cancion(es) esperando` }
+        footer: { text: `${rest.length} cancion(es) esperando` }
       }]
     });
   }
@@ -105,8 +102,10 @@ const np = {
     .setName('np')
     .setDescription('Muestra la canción que suena ahora'),
   async execute(interaction, client) {
-    const q = client.queues.get(interaction.guildId);
-    if (!q || !q.current) return interaction.reply('❌ No hay nada reproduciendo ahora mismo.');
+    const q = client.distube.getQueue(interaction.guildId);
+    if (!q || !q.songs[0]) return interaction.reply('❌ No hay nada reproduciendo ahora mismo.');
+
+    const current = q.songs[0];
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('pause_btn').setLabel('⏸ Pausar').setStyle(ButtonStyle.Secondary),
@@ -118,11 +117,11 @@ const np = {
       embeds: [{
         color: 0x1DB954,
         title: '▶️ Sonando ahora',
-        description: `**[${q.current.title}](${q.current.url})**`,
-        thumbnail: q.current.thumbnail ? { url: q.current.thumbnail } : undefined,
+        description: `**[${current.name}](${current.url})**`,
+        thumbnail: current.thumbnail ? { url: current.thumbnail } : undefined,
         fields: [
-          { name: '⏱ Duración', value: q.current.duration || 'Desconocida', inline: true },
-          { name: '📋 En cola', value: `${q.songs.length} cancion(es)`, inline: true },
+          { name: '⏱ Duración', value: current.formattedDuration || 'Desconocida', inline: true },
+          { name: '📋 En cola', value: `${q.songs.length - 1} cancion(es)`, inline: true },
         ],
         footer: { text: 'Jona Bot 🎵' }
       }],
@@ -135,24 +134,25 @@ const np = {
       if (btn.user.id !== interaction.user.id) {
         return btn.reply({ content: '❌ Solo quien usó /np puede usar estos botones.', ephemeral: true });
       }
-      const qNow = client.queues.get(interaction.guildId);
+      const qNow = client.distube.getQueue(interaction.guildId);
       if (!qNow) return btn.reply({ content: '❌ No hay nada reproduciendo.', ephemeral: true });
 
       if (btn.customId === 'pause_btn') {
-        qNow.player.pause();
+        qNow.pause();
         await btn.reply('⏸️ Pausado.');
       } else if (btn.customId === 'skip_btn') {
-        qNow.player.stop();
-        await btn.reply('⏭️ Saltado.');
+        try {
+          await qNow.skip();
+          await btn.reply('⏭️ Saltado.');
+        } catch {
+          await btn.reply('⏭️ Era la última canción, la cola terminó.');
+        }
       } else if (btn.customId === 'stop_btn') {
-        qNow.songs = [];
-        qNow.player.stop();
-        qNow.connection.destroy();
-        client.queues.delete(interaction.guildId);
+        qNow.stop();
         await btn.reply('⏹️ Música detenida.');
       }
     });
   }
 };
 
-module.exports = [skip, pause, resume, stop, queue, np];
+module.exports = [skip, pause, resume, stop, queueCmd, np];

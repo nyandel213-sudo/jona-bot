@@ -19,11 +19,11 @@ module.exports = {
     let query = interaction.options.getString('cancion');
 
     if (!query) {
-      const queue = client.queues.get(interaction.guildId);
-      if (!queue || !queue.current) {
+      const queue = client.distube.getQueue(interaction.guildId);
+      if (!queue || !queue.songs[0]) {
         return interaction.editReply('❌ No hay ninguna canción sonando. Usa `/letra <nombre>` para buscar.');
       }
-      query = queue.current.title;
+      query = queue.songs[0].name;
     }
 
     try {

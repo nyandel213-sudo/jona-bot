@@ -2,6 +2,9 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, Collection } = require('discord.js');
 const { REST } = require('@discordjs/rest');
 const { Routes } = require('discord-api-types/v10');
+const { DisTube } = require('distube');
+const { YtDlpPlugin } = require('@distube/yt-dlp');
+const { SpotifyPlugin } = require('@distube/spotify');
 const fs = require('fs');
 const path = require('path');
 
@@ -15,9 +18,22 @@ const client = new Client({
 });
 
 client.commands = new Collection();
-client.queues = new Map(); // { guildId: { songs[], player, connection, current, textChannel } }
 
-// Cargar comandos
+// ─── DisTube ────────────────────────────────────────────────────────────────
+// yt-dlp es mucho más resistente a los bloqueos de YouTube en servidores
+// cloud (Railway) que play-dl o ytdl-core, porque usa el binario yt-dlp
+// en vez de hacer las peticiones directas desde Node.
+client.distube = new DisTube(client, {
+  emitNewSongOnly: true,
+  emitAddSongWhenCreatingQueue: false,
+  emitAddListWhenCreatingQueue: false,
+  plugins: [
+    new SpotifyPlugin({ emitEventsAfterFetching: true }),
+    new YtDlpPlugin({ update: false }),
+  ],
+});
+
+// ─── Cargar comandos ────────────────────────────────────────────────────────
 const commandsPath = path.join(__dirname, 'commands');
 const commandFiles = fs.readdirSync(commandsPath).filter(f => f.endsWith('.js') && !f.startsWith('_'));
 const commandsData = [];
@@ -31,6 +47,60 @@ for (const file of commandFiles) {
   }
 }
 
+// ─── Eventos de DisTube ─────────────────────────────────────────────────────
+client.distube
+  .on('playSong', (queue, song) => {
+    if (queue.textChannel) {
+      queue.textChannel.send({
+        embeds: [{
+          color: 0x1DB954,
+          title: '▶️ Reproduciendo ahora',
+          description: `**[${song.name}](${song.url})**`,
+          thumbnail: song.thumbnail ? { url: song.thumbnail } : undefined,
+          fields: [{ name: '⏱ Duración', value: song.formattedDuration || 'Desconocida', inline: true }],
+          footer: { text: 'Jona Bot 🎵' },
+        }],
+      });
+    }
+  })
+  .on('addSong', (queue, song) => {
+    if (queue.textChannel) {
+      queue.textChannel.send({
+        embeds: [{
+          color: 0x5865F2,
+          title: '➕ Añadido a la cola',
+          description: `**[${song.name}](${song.url})**`,
+          thumbnail: song.thumbnail ? { url: song.thumbnail } : undefined,
+          fields: [
+            { name: '⏱ Duración', value: song.formattedDuration || 'Desconocida', inline: true },
+            { name: '📋 Posición en cola', value: `#${queue.songs.length - 1}`, inline: true },
+          ],
+        }],
+      });
+    }
+  })
+  .on('empty', (queue) => {
+    if (queue.textChannel) queue.textChannel.send('👋 Canal de voz vacío, saliendo...');
+  })
+  .on('finish', (queue) => {
+    if (queue.textChannel) queue.textChannel.send('✅ Cola terminada.');
+  })
+  .on('disconnect', (queue) => {
+    if (queue.textChannel) queue.textChannel.send('👋 Desconectado del canal de voz.');
+  })
+  .on('searchNoResult', (message, query) => {
+    const channel = message?.channel || message;
+    if (channel?.send) channel.send(`❌ No encontré resultados para **${query}**.`);
+  })
+  .on('error', (channelOrQueue, error) => {
+    console.error('❌ DisTube error:', error);
+    const channel = channelOrQueue?.textChannel || channelOrQueue;
+    if (channel?.send) {
+      channel.send('❌ Ocurrió un error reproduciendo esa canción. Puede que YouTube esté bloqueando temporalmente la petición, intenta de nuevo.').catch(() => {});
+    }
+  });
+
+// ─── Ready ──────────────────────────────────────────────────────────────────
 client.once('ready', async () => {
   console.log(`✅ Jona Bot listo como ${client.user.tag}`);
 
@@ -46,7 +116,10 @@ client.once('ready', async () => {
   }
 });
 
+// ─── Interacciones ──────────────────────────────────────────────────────────
 client.on('interactionCreate', async (interaction) => {
+  if (interaction.isButton()) return; // los botones se manejan con collectors en cada comando
+
   if (!interaction.isChatInputCommand()) return;
   const command = client.commands.get(interaction.commandName);
   if (!command) return;
