@@ -1,10 +1,9 @@
 [phases.setup]
 nixPkgs = ["nodejs_20", "ffmpeg", "python3"]
+
+[phases.install]
 cmds = [
-  "mkdir -p /usr/local/bin",
-  "echo '#!/bin/sh' > /usr/local/bin/husky",
-  "echo 'exit 0' >> /usr/local/bin/husky",
-  "chmod +x /usr/local/bin/husky"
+  "mkdir -p /usr/local/bin && echo '#!/bin/sh' > /usr/local/bin/husky && echo 'exit 0' >> /usr/local/bin/husky && chmod +x /usr/local/bin/husky && npm install"
 ]
 
 [start]
