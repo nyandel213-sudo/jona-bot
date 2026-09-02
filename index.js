@@ -4,8 +4,27 @@ const { REST } = require('@discordjs/rest');
 const { Routes } = require('discord-api-types/v10');
 const { DisTube } = require('distube');
 const { YtDlpPlugin } = require('@distube/yt-dlp');
+const { SpotifyPlugin } = require('@distube/spotify');
 const fs = require('fs');
 const path = require('path');
+
+// ─── Cookies de YouTube (para saltar el bloqueo 403 de Cloudflare) ──────────
+// Railway usa IPs de datacenter que YouTube bloquea agresivamente. Pasarle
+// cookies de una sesión logueada a yt-dlp reduce ese bloqueo.
+// La variable YOUTUBE_COOKIES debe contener el contenido completo del
+// cookies.txt exportado (formato Netscape), pegado como variable de
+// entorno en Railway → Variables.
+const COOKIES_PATH = path.join(__dirname, 'cookies.txt');
+if (process.env.YOUTUBE_COOKIES) {
+  try {
+    fs.writeFileSync(COOKIES_PATH, process.env.YOUTUBE_COOKIES, 'utf8');
+    console.log('✅ cookies.txt escrito desde YOUTUBE_COOKIES');
+  } catch (err) {
+    console.error('❌ No se pudo escribir cookies.txt:', err);
+  }
+} else {
+  console.warn('⚠️ No hay variable YOUTUBE_COOKIES configurada, yt-dlp intentará sin cookies.');
+}
 
 const client = new Client({
   intents: [
@@ -18,15 +37,28 @@ const client = new Client({
 
 client.commands = new Collection();
 
+// ─── DisTube ────────────────────────────────────────────────────────────────
+// yt-dlp es mucho más resistente a los bloqueos de YouTube en servidores
+// cloud (Railway) que play-dl o ytdl-core, porque usa el binario yt-dlp
+// en vez de hacer las peticiones directas desde Node.
 client.distube = new DisTube(client, {
   emitNewSongOnly: true,
   emitAddSongWhenCreatingQueue: false,
   emitAddListWhenCreatingQueue: false,
   plugins: [
-    new YtDlpPlugin({ update: false }),
+    new SpotifyPlugin({ emitEventsAfterFetching: true }),
+    new YtDlpPlugin({
+      update: false,
+      // Le pasamos el archivo de cookies a yt-dlp si existe, para que
+      // haga las peticiones como si fuera una sesión de YouTube logueada.
+      ytdlpOptions: process.env.YOUTUBE_COOKIES
+        ? { cookies: COOKIES_PATH }
+        : {},
+    }),
   ],
 });
 
+// ─── Cargar comandos ────────────────────────────────────────────────────────
 const commandsPath = path.join(__dirname, 'commands');
 const commandFiles = fs.readdirSync(commandsPath).filter(f => f.endsWith('.js') && !f.startsWith('_'));
 const commandsData = [];
@@ -40,6 +72,7 @@ for (const file of commandFiles) {
   }
 }
 
+// ─── Eventos de DisTube ─────────────────────────────────────────────────────
 client.distube
   .on('playSong', (queue, song) => {
     if (queue.textChannel) {
@@ -74,22 +107,6 @@ client.distube
   .on('empty', (queue) => {
     if (queue.textChannel) queue.textChannel.send('👋 Canal de voz vacío, saliendo...');
   })
-  .on('initQueue', (queue) => {
-    console.log('🔍 initQueue disparado, buscando conexión de voz...');
-    const voice = client.distube.voices.get(queue.id);
-    if (voice && voice.connection) {
-      console.log('🔍 Conexión de voz encontrada, escuchando cambios de estado...');
-      voice.connection.on('stateChange', (oldState, newState) => {
-        console.log(`🔍 Voice state: ${oldState.status} -> ${newState.status}`);
-        if (newState.networking) {
-          console.log(`🔍 Networking state: ${newState.networking.state?.code}`);
-        }
-      });
-      voice.connection.on('debug', (msg) => console.log('🔍 Voice debug:', msg));
-    } else {
-      console.log('🔍 No se encontró la conexión de voz todavía.');
-    }
-  })
   .on('finish', (queue) => {
     if (queue.textChannel) queue.textChannel.send('✅ Cola terminada.');
   })
@@ -108,6 +125,7 @@ client.distube
     }
   });
 
+// ─── Ready ──────────────────────────────────────────────────────────────────
 client.once('ready', async () => {
   console.log(`✅ Jona Bot listo como ${client.user.tag}`);
 
@@ -123,8 +141,9 @@ client.once('ready', async () => {
   }
 });
 
+// ─── Interacciones ──────────────────────────────────────────────────────────
 client.on('interactionCreate', async (interaction) => {
-  if (interaction.isButton()) return;
+  if (interaction.isButton()) return; // los botones se manejan con collectors en cada comando
 
   if (!interaction.isChatInputCommand()) return;
   const command = client.commands.get(interaction.commandName);
