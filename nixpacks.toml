@@ -1,5 +1,11 @@
 [phases.setup]
 nixPkgs = ["ffmpeg", "python3"]
+cmds = [
+  "mkdir -p /usr/local/bin",
+  "echo '#!/bin/sh' > /usr/local/bin/husky",
+  "echo 'exit 0' >> /usr/local/bin/husky",
+  "chmod +x /usr/local/bin/husky"
+]
 
 [start]
 cmd = "node index.js"
