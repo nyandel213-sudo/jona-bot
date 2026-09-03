@@ -1,3 +1,8 @@
+// Fuerza a Node a resolver direcciones IPv4 primero. Sin esto, en Railway
+// la conexión de voz (UDP) a los servidores de Discord suele fallar con
+// VOICE_CONNECT_FAILED porque intenta IPv6 primero y no funciona bien ahí.
+require('dns').setDefaultResultOrder('ipv4first');
+
 require('dotenv').config();
 const { Client, GatewayIntentBits, Collection } = require('discord.js');
 const { REST } = require('@discordjs/rest');
