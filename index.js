@@ -1,35 +1,10 @@
-// Fuerza a Node a resolver direcciones IPv4 primero. Sin esto, en Railway
-// la conexión de voz (UDP) a los servidores de Discord suele fallar con
-// VOICE_CONNECT_FAILED porque intenta IPv6 primero y no funciona bien ahí.
-require('dns').setDefaultResultOrder('ipv4first');
-
 require('dotenv').config();
 const { Client, GatewayIntentBits, Collection } = require('discord.js');
 const { REST } = require('@discordjs/rest');
 const { Routes } = require('discord-api-types/v10');
-const { DisTube } = require('distube');
-const { YtDlpPlugin } = require('@distube/yt-dlp');
-const { SpotifyPlugin } = require('@distube/spotify');
+const { LavalinkManager } = require('lavalink-client');
 const fs = require('fs');
 const path = require('path');
-
-// ─── Cookies de YouTube (para saltar el bloqueo 403 de Cloudflare) ──────────
-// Railway usa IPs de datacenter que YouTube bloquea agresivamente. Pasarle
-// cookies de una sesión logueada a yt-dlp reduce ese bloqueo.
-// La variable YOUTUBE_COOKIES debe contener el contenido completo del
-// cookies.txt exportado (formato Netscape), pegado como variable de
-// entorno en Railway → Variables.
-const COOKIES_PATH = path.join(__dirname, 'cookies.txt');
-if (process.env.YOUTUBE_COOKIES) {
-  try {
-    fs.writeFileSync(COOKIES_PATH, process.env.YOUTUBE_COOKIES, 'utf8');
-    console.log('✅ cookies.txt escrito desde YOUTUBE_COOKIES');
-  } catch (err) {
-    console.error('❌ No se pudo escribir cookies.txt:', err);
-  }
-} else {
-  console.warn('⚠️ No hay variable YOUTUBE_COOKIES configurada, yt-dlp intentará sin cookies.');
-}
 
 const client = new Client({
   intents: [
@@ -42,30 +17,54 @@ const client = new Client({
 
 client.commands = new Collection();
 
-// ─── DisTube ────────────────────────────────────────────────────────────────
-// yt-dlp es mucho más resistente a los bloqueos de YouTube en servidores
-// cloud (Railway) que play-dl o ytdl-core, porque usa el binario yt-dlp
-// en vez de hacer las peticiones directas desde Node.
-client.distube = new DisTube(client, {
-  emitNewSongOnly: true,
-  emitAddSongWhenCreatingQueue: false,
-  emitAddListWhenCreatingQueue: false,
-  plugins: [
-    new SpotifyPlugin({ emitEventsAfterFetching: true }),
-    new YtDlpPlugin({
-      update: false,
-      // Le pasamos el archivo de cookies a yt-dlp si existe, para que
-      // haga las peticiones como si fuera una sesión de YouTube logueada.
-      ytdlpOptions: process.env.YOUTUBE_COOKIES
-        ? { cookies: COOKIES_PATH }
-        : {},
-    }),
+client.lavalink = new LavalinkManager({
+  nodes: [
+    {
+      id: 'heavencloud-eu',
+      host: 'eu.lavalink.heavencloud.in',
+      port: 443,
+      authorization: 'heavencloud',
+      secure: true,
+    },
   ],
+  sendToShard: (guildId, payload) =>
+    client.guilds.cache.get(guildId)?.shard?.send(payload),
+  client: { id: '' },
 });
 
-// ─── Cargar comandos ────────────────────────────────────────────────────────
+client.on('raw', (d) => client.lavalink.sendRawData(d));
+
+client.lavalink.nodeManager
+  .on('connect', (node) => console.log(`✅ Lavalink conectado: ${node.id}`))
+  .on('error', (node, error) =>
+    console.error(`❌ Error de Lavalink (${node.id}):`, error)
+  );
+
+client.lavalink
+  .on('trackStart', (player, track) => {
+    const channel = client.channels.cache.get(player.textChannelId);
+    if (channel) {
+      channel.send({
+        embeds: [{
+          color: 0x1db954,
+          title: '▶️ Reproduciendo ahora',
+          description: `**[${track.info.title}](${track.info.uri})**`,
+          thumbnail: track.info.artworkUrl ? { url: track.info.artworkUrl } : undefined,
+          footer: { text: 'Jona Bot 🎵' },
+        }],
+      });
+    }
+  })
+  .on('queueEnd', (player) => {
+    const channel = client.channels.cache.get(player.textChannelId);
+    if (channel) channel.send('✅ Cola terminada.');
+    player.destroy();
+  });
+
 const commandsPath = path.join(__dirname, 'commands');
-const commandFiles = fs.readdirSync(commandsPath).filter(f => f.endsWith('.js') && !f.startsWith('_'));
+const commandFiles = fs
+  .readdirSync(commandsPath)
+  .filter((f) => f.endsWith('.js') && !f.startsWith('_'));
 const commandsData = [];
 
 for (const file of commandFiles) {
@@ -77,80 +76,29 @@ for (const file of commandFiles) {
   }
 }
 
-// ─── Eventos de DisTube ─────────────────────────────────────────────────────
-client.distube
-  .on('playSong', (queue, song) => {
-    if (queue.textChannel) {
-      queue.textChannel.send({
-        embeds: [{
-          color: 0x1DB954,
-          title: '▶️ Reproduciendo ahora',
-          description: `**[${song.name}](${song.url})**`,
-          thumbnail: song.thumbnail ? { url: song.thumbnail } : undefined,
-          fields: [{ name: '⏱ Duración', value: song.formattedDuration || 'Desconocida', inline: true }],
-          footer: { text: 'Jona Bot 🎵' },
-        }],
-      });
-    }
-  })
-  .on('addSong', (queue, song) => {
-    if (queue.textChannel) {
-      queue.textChannel.send({
-        embeds: [{
-          color: 0x5865F2,
-          title: '➕ Añadido a la cola',
-          description: `**[${song.name}](${song.url})**`,
-          thumbnail: song.thumbnail ? { url: song.thumbnail } : undefined,
-          fields: [
-            { name: '⏱ Duración', value: song.formattedDuration || 'Desconocida', inline: true },
-            { name: '📋 Posición en cola', value: `#${queue.songs.length - 1}`, inline: true },
-          ],
-        }],
-      });
-    }
-  })
-  .on('empty', (queue) => {
-    if (queue.textChannel) queue.textChannel.send('👋 Canal de voz vacío, saliendo...');
-  })
-  .on('finish', (queue) => {
-    if (queue.textChannel) queue.textChannel.send('✅ Cola terminada.');
-  })
-  .on('disconnect', (queue) => {
-    if (queue.textChannel) queue.textChannel.send('👋 Desconectado del canal de voz.');
-  })
-  .on('searchNoResult', (message, query) => {
-    const channel = message?.channel || message;
-    if (channel?.send) channel.send(`❌ No encontré resultados para **${query}**.`);
-  })
-  .on('error', (channelOrQueue, error) => {
-    console.error('❌ DisTube error:', error);
-    const channel = channelOrQueue?.textChannel || channelOrQueue;
-    if (channel?.send) {
-      channel.send('❌ Ocurrió un error reproduciendo esa canción. Puede que YouTube esté bloqueando temporalmente la petición, intenta de nuevo.').catch(() => {});
-    }
-  });
-
-// ─── Ready ──────────────────────────────────────────────────────────────────
 client.once('ready', async () => {
   console.log(`✅ Jona Bot listo como ${client.user.tag}`);
 
+  await client.lavalink.init({
+    id: client.user.id,
+    username: client.user.username,
+  });
+
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   try {
-    await rest.put(
-      Routes.applicationCommands(client.user.id),
-      { body: commandsData }
-    );
+    await rest.put(Routes.applicationCommands(client.user.id), {
+      body: commandsData,
+    });
     console.log('✅ Slash commands registrados');
   } catch (err) {
     console.error('❌ Error registrando comandos:', err);
   }
 });
 
-// ─── Interacciones ──────────────────────────────────────────────────────────
 client.on('interactionCreate', async (interaction) => {
-  if (interaction.isButton()) return; // los botones se manejan con collectors en cada comando
-
+  if (interaction.isButton()) return;
   if (!interaction.isChatInputCommand()) return;
+
   const command = client.commands.get(interaction.commandName);
   if (!command) return;
 
@@ -158,7 +106,10 @@ client.on('interactionCreate', async (interaction) => {
     await command.execute(interaction, client);
   } catch (err) {
     console.error(err);
-    const msg = { content: '❌ Ocurrió un error ejecutando ese comando.', ephemeral: true };
+    const msg = {
+      content: '❌ Ocurrió un error ejecutando ese comando.',
+      ephemeral: true,
+    };
     if (interaction.replied || interaction.deferred) {
       await interaction.followUp(msg);
     } else {
