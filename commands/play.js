@@ -18,7 +18,14 @@ module.exports = {
       return interaction.editReply('❌ Tienes que estar en un canal de voz primero.');
     }
 
-    const query = interaction.options.getString('cancion');
+    const rawQuery = interaction.options.getString('cancion');
+
+    // Si no es un link (YouTube, Spotify, SoundCloud, etc.), usamos el
+    // prefijo "ytsearch:" para que sea yt-dlp quien busque en YouTube, en
+    // vez del buscador interno de DisTube (@distube/ytsr), que está
+    // desactualizado y suele romperse cuando YouTube cambia su página.
+    const isUrl = /^https?:\/\//i.test(rawQuery);
+    const query = isUrl ? rawQuery : `ytsearch:${rawQuery}`;
 
     try {
       // client.distube.play se encarga de: unirse al canal, resolver el link
@@ -30,7 +37,7 @@ module.exports = {
         member: interaction.member,
       });
 
-      await interaction.editReply(`🔎 Buscando **${query}**...`);
+      await interaction.editReply(`🔎 Buscando **${rawQuery}**...`);
     } catch (err) {
       console.error('❌ Error en /play:', err);
       await interaction.editReply('❌ No pude reproducir esa canción. Intenta con otro nombre o link.');
