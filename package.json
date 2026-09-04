@@ -1,0 +1,22 @@
+{
+  "name": "jona-bot",
+  "version": "4.0.0",
+  "description": "Bot de música para Discord - Railway ready (DisTube v5)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@discordjs/rest": "^2.4.0",
+    "discord-api-types": "^0.37.97",
+    "discord.js": "^14.15.3",
+    "distube": "^5.0.10",
+    "@distube/yt-dlp": "^2.0.3",
+    "@distube/spotify": "^2.0.1",
+    "dotenv": "^16.4.5",
+    "genius-lyrics": "^4.4.7"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
